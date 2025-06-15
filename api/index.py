@@ -8,9 +8,6 @@ from typing import List, Dict, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import openai
-import requests
-import zipfile
-from io import BytesIO
 
 client = openai.OpenAI(
     api_key=os.environ["OPENAI_API_KEY"],
@@ -19,6 +16,7 @@ client = openai.OpenAI(
 
 EMBEDDING_MODEL_NAME  = "text-embedding-3-small"
 GENERATION_MODEL_NAME = "gpt-3.5-turbo"
+EMBEDDING_FILE        = "embedding.npz"
 
 app = FastAPI()
 
@@ -38,7 +36,7 @@ class QueryResponse(BaseModel):
 embeddings_data: Optional[np.ndarray] = None
 chunks_metadata: Optional[List[Dict]]  = None
 
-# ——— 1) IMAGE CAPTIONING ———
+# 1. IMAGE CAPTIONING
 async def get_image_description(b64_data_uri: str) -> Optional[str]:
     _, _, b64data = b64_data_uri.partition("base64,")
     try:
@@ -59,7 +57,7 @@ async def get_image_description(b64_data_uri: str) -> Optional[str]:
         print("❌ Image description error:", e)
         return None
 
-# ——— 2) TEXT EMBEDDING ———
+# 2. TEXT EMBEDDING
 async def get_text_embedding(text: str) -> Optional[np.ndarray]:
     try:
         r = await asyncio.to_thread(lambda: client.embeddings.create(
@@ -71,7 +69,7 @@ async def get_text_embedding(text: str) -> Optional[np.ndarray]:
         print("❌ Text embed error:", e)
         return None
 
-# ——— 3) COMBINED EMBEDDING ———
+# 3. COMBINED EMBEDDING
 async def get_combined_embedding(question: str, image_b64: Optional[str]) -> Optional[np.ndarray]:
     if image_b64:
         desc = await get_image_description(image_b64)
@@ -79,7 +77,7 @@ async def get_combined_embedding(question: str, image_b64: Optional[str]) -> Opt
             question = f"[Image description: {desc}]\n{question}"
     return await get_text_embedding(question)
 
-# ——— 4) FIND BEST CHUNK ———
+# 4. FIND BEST CHUNK
 async def find_best_chunk(
     question: str,
     image_b64: Optional[str],
@@ -110,7 +108,7 @@ async def find_best_chunk(
 
     return chunk
 
-# ——— 5) GENERATE ANSWER ———
+# 5. GENERATE ANSWER
 async def generate_answer(question: str, chunk: Dict) -> str:
     ctx = chunk.get("text", "")
     if not ctx:
@@ -129,29 +127,22 @@ async def generate_answer(question: str, chunk: Dict) -> str:
         print("❌ Generation error:", e)
         return "I don't know."
 
-# ——— ✅ 6) UPDATED STARTUP: load embeddings from GitHub Release ZIP ———
+# ✅ 6. STARTUP: LOAD LOCALLY
 @app.on_event("startup")
 async def startup_event():
     global embeddings_data, chunks_metadata
     try:
-        print("📦 Downloading embedding.zip from EMBEDDING_URL...")
-        url = os.environ["EMBEDDING_URL"]
-        res = requests.get(url)
-        res.raise_for_status()
-
-        with zipfile.ZipFile(BytesIO(res.content)) as archive:
-            with archive.open("embedding.npz") as npz_file:
-                data = np.load(npz_file, allow_pickle=True)
-                embeddings_data = np.array(data["vectors"])
-                chunks_metadata = list(data["metadata"])
-
-        print(f"✅ Loaded {len(embeddings_data)} embeddings from GitHub ZIP")
+        print("📂 Loading embeddings from local embedding.npz...")
+        data = np.load(EMBEDDING_FILE, allow_pickle=True)
+        embeddings_data = np.array(data["vectors"])
+        chunks_metadata = list(data["metadata"])
+        print(f"✅ Loaded {len(embeddings_data)} embeddings from file")
     except Exception as e:
-        print("❌ Failed to load embeddings:", e)
+        print("❌ Failed to load embeddings from file:", e)
         embeddings_data = np.array([])
         chunks_metadata = []
 
-# ——— 7) API ROUTES ———
+# 7. API ROUTES
 @app.post("/api/", response_model=QueryResponse)
 async def api_handler(payload: QueryRequest) -> QueryResponse:
     q = payload.question.strip()
