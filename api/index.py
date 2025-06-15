@@ -175,7 +175,3 @@ async def health():
         "embeddings_loaded": bool(embeddings_data.size),
         "num_embeddings": embeddings_data.shape[0] if embeddings_data is not None else 0
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("api.index:app", host="0.0.0.0", port=8000, reload=True)
